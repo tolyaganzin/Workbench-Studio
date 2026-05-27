@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0"
+    />
+
+    <title>Workbench Studio</title>
+
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+
+  <body>
+    <!-- SIDEBAR -->
+    <aside class="sidebar">
+      <h2>Workbench Studio</h2>
+
+      <!-- GLOBAL TABS -->
+      <div class="tabs">
+        <button
+          class="global-tab active"
+          data-tab="create"
+        >
+          Create
+        </button>
+
+        <button
+          class="global-tab"
+          data-tab="live"
+        >
+          Live
+        </button>
+      </div>
+
+      <!-- CREATE -->
+      <div
+        id="createTab"
+        class="tab-content active"
+      >
+        <button id="refreshDevices">
+          Refresh Devices
+        </button>
+
+        <h3>Cameras</h3>
+        <div id="cameraList"></div>
+
+        <h3>Microphones</h3>
+        <div id="micList"></div>
+
+        <hr />
+
+        <button id="captureScreenBtn">
+          Capture Screen
+        </button>
+
+        <button id="stopAllBtn">
+          STOP ALL
+        </button>
+
+        <hr />
+
+        <h3>Workbench</h3>
+
+        <div class="workbench-controls">
+          <label>
+            Width
+            <input id="workbenchWidth" type="number" min="100" value="1280" />
+          </label>
+
+          <label>
+            Height
+            <input id="workbenchHeight" type="number" min="100" value="720" />
+          </label>
+        </div>
+
+        <hr />
+
+        <h3>Layers</h3>
+
+        <div id="layersPanel"></div>
+      </div>
+
+      <!-- LIVE -->
+      <div id="liveTab" class="tab-content">
+        <button id="startStreamBtn">
+          START LIVE
+        </button>
+
+        <button
+          id="stopLiveBtn"
+          style="display: none"
+        >
+          STOP LIVE
+        </button>
+
+        <div class="live-info">
+          Live output preview is shown on the right
+        </div>
+      </div>
+    </aside>
+
+    <!-- RIGHT SIDE -->
+    <main class="main">
+      <div class="workbench-wrapper">
+        <!-- CREATE VIEW -->
+        <div
+          id="workbenchView"
+          class="view active"
+        >
+          <div class="workbench-header">
+            <span>Workbench</span>
+
+            <span id="sceneInfo"></span>
+          </div>
+
+          <div id="workbench">
+            <canvas
+              id="streamCanvas"
+              width="1280"
+              height="720"
+            ></canvas>
+
+            <div id="editor"></div>
+          </div>
+        </div>
+
+        <!-- LIVE VIEW -->
+        <div id="liveView" class="view">
+          <div class="workbench-header">
+            <span>Live Output</span>
+          </div>
+
+          <div class="live-preview-wrapper">
+            <div id="livePlaceholder">
+              Press START LIVE
+            </div>
+
+            <video
+              id="previewVideo"
+              autoplay
+              muted
+              playsinline
+            ></video>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <script src="script.js"></script>
+  </body>
+</html>
