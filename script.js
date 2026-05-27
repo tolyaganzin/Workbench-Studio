@@ -143,6 +143,92 @@ function updateSceneInfo() {
     `Layers: ${scene.length}`;
 }
 
+// -------------------------
+// SCALE / FIT HELPERS
+// -------------------------
+
+const workbenchContent =
+  document.querySelector('.workbench-content');
+
+const liveContent =
+  document.querySelector('.live-content');
+
+const workbenchScaleInput =
+  document.getElementById('workbenchScale');
+
+const workbenchScaleValue =
+  document.getElementById('workbenchScaleValue');
+
+const SCALE_MIN = 0.25;
+const SCALE_MAX = 1.5;
+let workbenchScale = 1;
+
+function updateSizeLabels() {
+  const text = `${workbenchWidth}×${workbenchHeight}`;
+  const wh = document.getElementById('workbenchHeaderSize');
+  const lh = document.getElementById('liveHeaderSize');
+  if (wh) wh.textContent = text;
+  if (lh) lh.textContent = text;
+}
+
+function updateScale(value, updateInput = true) {
+  const next = Math.min(SCALE_MAX, Math.max(SCALE_MIN, value));
+
+  workbenchScale = next;
+
+  if (workbenchScaleInput && updateInput) {
+    workbenchScaleInput.value = next;
+  }
+
+  if (workbenchScaleValue) {
+    workbenchScaleValue.textContent = `${Math.round(next * 100)}%`;
+  }
+
+  if (workbenchContent) {
+    workbenchContent.style.transform = `scale(${next})`;
+    workbenchContent.style.transformOrigin = 'center top';
+  } else if (workbench) {
+    workbench.style.transform = `scale(${next})`;
+  }
+
+  if (liveContent) {
+    liveContent.style.transform = `scale(${next})`;
+    liveContent.style.transformOrigin = 'center top';
+  }
+}
+
+function autoScaleToFit() {
+  const container = document.querySelector('.main');
+  if (!container) return;
+
+  const bounds = container.getBoundingClientRect();
+  const style = window.getComputedStyle(container);
+  const padLeft = parseFloat(style.paddingLeft) || 0;
+  const padRight = parseFloat(style.paddingRight) || 0;
+  const padTop = parseFloat(style.paddingTop) || 0;
+  const padBottom = parseFloat(style.paddingBottom) || 0;
+
+  // active header sits above the view content
+  const activeHeader = container.querySelector('.view.active .workbench-header');
+  const headerH = activeHeader ? activeHeader.getBoundingClientRect().height : 0;
+
+  const availableW = Math.max(10, bounds.width - padLeft - padRight);
+  const availableH = Math.max(10, bounds.height - padTop - padBottom - headerH);
+
+  const fitScale = Math.min(
+    1,
+    Math.max(
+      SCALE_MIN,
+      Math.min(availableW / workbenchWidth, availableH / workbenchHeight)
+    )
+  );
+
+  updateScale(fitScale);
+}
+
+window.addEventListener('resize', () => autoScaleToFit());
+
+
 function updateWorkbenchSize(
   width,
   height
