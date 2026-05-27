@@ -51,6 +51,16 @@ const workbenchWidthInput =
 const workbenchHeightInput =
   document.getElementById('workbenchHeight');
 
+const workbenchSizeSelect =
+  document.getElementById('workbenchSizeSelect');
+
+const PRESETS = {
+  hd: { w: 1280, h: 720 },
+  fullhd: { w: 1920, h: 1080 },
+  qhd: { w: 2560, h: 1440 },
+  uhd: { w: 3840, h: 2160 },
+};
+
 const audioContext =
   new AudioContext();
 
@@ -185,6 +195,24 @@ function updateWorkbenchSize(
     workbenchWidth + 'px';
   livePreviewWrapper.style.height =
     workbenchHeight + 'px';
+
+  // Keep preset select in sync with current size
+  try {
+    if (workbenchSizeSelect) {
+      let matched = false;
+      for (const key in PRESETS) {
+        const p = PRESETS[key];
+        if (p.w === workbenchWidth && p.h === workbenchHeight) {
+          workbenchSizeSelect.value = key;
+          matched = true;
+          break;
+        }
+      }
+      if (!matched) workbenchSizeSelect.value = 'custom';
+    }
+  } catch (e) {
+    /* ignore if select not present */
+  }
 }
 
 workbenchWidthInput.onchange = () => {
@@ -205,6 +233,20 @@ updateWorkbenchSize(
   workbenchWidth,
   workbenchHeight
 );
+
+// Wire preset select -> inputs
+if (workbenchSizeSelect) {
+  workbenchSizeSelect.onchange = () => {
+    const v = workbenchSizeSelect.value;
+    if (v === 'custom') return;
+    const p = PRESETS[v];
+    if (p) {
+      workbenchWidthInput.value = p.w;
+      workbenchHeightInput.value = p.h;
+      updateWorkbenchSize(p.w, p.h);
+    }
+  };
+}
 
 // --------------------------------------------------
 // AUDIO

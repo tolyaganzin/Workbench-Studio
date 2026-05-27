@@ -64,14 +64,26 @@
 
         <h3>Workbench</h3>
 
+        
         <div class="workbench-controls">
           <label>
-            Width
+            Quick Size
+            <select id="workbenchSizeSelect">
+              <option value="hd">hd (1280×720)</option>
+              <option value="fullhd">full HD (1920×1080)</option>
+              <option value="qhd">QHD 2k (2560×1440)</option>
+              <option value="uhd">UHD 4k (3840×2160)</option>
+              <option value="custom">custom</option>
+            </select>
+          </label>
+          
+          <label>
+            Width px
             <input id="workbenchWidth" type="number" min="100" value="1280" />
           </label>
 
           <label>
-            Height
+            Height px
             <input id="workbenchHeight" type="number" min="100" value="720" />
           </label>
         </div>
