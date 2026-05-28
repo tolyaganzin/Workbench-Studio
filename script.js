@@ -1160,6 +1160,15 @@ startStreamBtn.onclick = () => {
     'block';
 
   log('LIVE STARTED');
+  console.log(
+    Array.from(finalStream.getTracks()).map((track) => ({
+      kind: track.kind,
+      label: track.label,
+      enabled: track.enabled,
+      id: track.id,
+      settings: track.getSettings(),
+    }))
+  );
 };
 
 // --------------------------------------------------
