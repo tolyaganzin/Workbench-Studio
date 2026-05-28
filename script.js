@@ -992,19 +992,36 @@ function createTile(item) {
             e.clientY -
             startMouseY;
 
-          if (e.shiftKey) {
-            item.width =
-              startWidth + dx;
+          if (
+            item.shape === 'circle' ||
+            item.shape === 'square'
+          ) {
+            const size = Math.max(
+              10,
+              startWidth + dx
+            );
+            item.width = size;
+            item.height = size;
+          } else if (e.shiftKey) {
+            item.width = Math.max(
+              10,
+              startWidth + dx
+            );
 
-            item.height =
-              item.width /
-              item.aspectRatio;
+            item.height = Math.max(
+              10,
+              item.width / item.aspectRatio
+            );
           } else {
-            item.width =
-              startWidth + dx;
+            item.width = Math.max(
+              10,
+              startWidth + dx
+            );
 
-            item.height =
-              startHeight + dy;
+            item.height = Math.max(
+              10,
+              startHeight + dy
+            );
           }
         }
 
@@ -1015,6 +1032,9 @@ function createTile(item) {
     window.addEventListener(
       'mouseup',
       () => {
+        if (resizing) {
+          refreshLayersPanel();
+        }
         dragging = false;
         resizing = false;
       }
