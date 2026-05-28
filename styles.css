@@ -132,21 +132,12 @@ body {
 
 /* 1:1 */
 
-#streamCanvas,
 #editor {
   position: absolute;
-
   inset: 0;
 
   width: 1280px;
   height: 720px;
-}
-
-#streamCanvas {
-  z-index: 1;
-}
-
-#editor {
   z-index: 2;
 }
 

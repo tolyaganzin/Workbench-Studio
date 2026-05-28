@@ -1,11 +1,6 @@
 const editor =
   document.getElementById('editor');
 
-const canvas =
-  document.getElementById('streamCanvas');
-
-const ctx = canvas.getContext('2d');
-
 const previewVideo =
   document.getElementById('previewVideo');
 
@@ -44,6 +39,12 @@ const workbenchWrapper =
 
 const livePreviewWrapper =
   document.querySelector('.live-preview-wrapper');
+
+const hiddenStreamCanvas =
+  document.createElement('canvas');
+
+const hiddenStreamCtx =
+  hiddenStreamCanvas.getContext('2d');
 
 const workbenchWidthInput =
   document.getElementById('workbenchWidth');
@@ -264,13 +265,8 @@ function updateWorkbenchSize(
   workbench.style.height =
     workbenchHeight + 'px';
 
-  canvas.width = workbenchWidth;
-  canvas.height = workbenchHeight;
-
-  canvas.style.width =
-    workbenchWidth + 'px';
-  canvas.style.height =
-    workbenchHeight + 'px';
+  hiddenStreamCanvas.width = workbenchWidth;
+  hiddenStreamCanvas.height = workbenchHeight;
 
   editor.style.width =
     workbenchWidth + 'px';
@@ -378,41 +374,28 @@ function drawCoverVideo(
   height
 ) {
   const videoRatio =
-    video.videoWidth /
-    video.videoHeight;
-
+    video.videoWidth / video.videoHeight;
   const boxRatio = width / height;
 
   let drawWidth;
   let drawHeight;
-
   let offsetX = 0;
   let offsetY = 0;
 
   if (videoRatio > boxRatio) {
     drawHeight = height;
-
-    drawWidth =
-      height * videoRatio;
-
-    offsetX =
-      (drawWidth - width) / 2;
+    drawWidth = height * videoRatio;
+    offsetX = (drawWidth - width) / 2;
   } else {
     drawWidth = width;
-
-    drawHeight =
-      width / videoRatio;
-
-    offsetY =
-      (drawHeight - height) / 2;
+    drawHeight = width / videoRatio;
+    offsetY = (drawHeight - height) / 2;
   }
 
   ctx.drawImage(
     video,
-
     x - offsetX,
     y - offsetY,
-
     drawWidth,
     drawHeight
   );
@@ -435,55 +418,101 @@ function roundedRect(
   const ry = Math.min(radiusY, height / 2);
 
   ctx.beginPath();
-
   ctx.moveTo(x + rx, y);
-
-  ctx.lineTo(
-    x + width - rx,
-    y
-  );
-
-  ctx.quadraticCurveTo(
-    x + width,
-    y,
-    x + width,
-    y + ry
-  );
-
-  ctx.lineTo(
-    x + width,
-    y + height - ry
-  );
-
+  ctx.lineTo(x + width - rx, y);
+  ctx.quadraticCurveTo(x + width, y, x + width, y + ry);
+  ctx.lineTo(x + width, y + height - ry);
   ctx.quadraticCurveTo(
     x + width,
     y + height,
     x + width - rx,
     y + height
   );
-
-  ctx.lineTo(
-    x + rx,
-    y + height
-  );
-
-  ctx.quadraticCurveTo(
-    x,
-    y + height,
-    x,
-    y + height - ry
-  );
-
+  ctx.lineTo(x + rx, y + height);
+  ctx.quadraticCurveTo(x, y + height, x, y + height - ry);
   ctx.lineTo(x, y + ry);
+  ctx.quadraticCurveTo(x, y, x + rx, y);
+  ctx.closePath();
+}
 
-  ctx.quadraticCurveTo(
-    x,
-    y,
-    x + rx,
-    y
+// --------------------------------------------------
+// RENDER
+// --------------------------------------------------
+
+function render() {
+  hiddenStreamCtx.clearRect(
+    0,
+    0,
+    hiddenStreamCanvas.width,
+    hiddenStreamCanvas.height
   );
 
-  ctx.closePath();
+  const sorted = [...scene].sort(
+    (a, b) => a.zIndex - b.zIndex
+  );
+
+  sorted.forEach((item) => {
+    if (item.type === 'microphone') return;
+
+    if (item.video.readyState >= 2) {
+      hiddenStreamCtx.save();
+
+      if (item.shape === 'circle') {
+        const centerX = item.x + item.width / 2;
+        const centerY = item.y + item.height / 2;
+        const radius = Math.min(item.width, item.height) / 2;
+
+        hiddenStreamCtx.beginPath();
+        hiddenStreamCtx.arc(
+          centerX,
+          centerY,
+          radius,
+          0,
+          Math.PI * 2
+        );
+        hiddenStreamCtx.clip();
+      } else {
+        roundedRect(
+          hiddenStreamCtx,
+          item.x,
+          item.y,
+          item.width,
+          item.height,
+          0,
+          0
+        );
+
+        hiddenStreamCtx.clip();
+      }
+
+      drawCoverVideo(
+        hiddenStreamCtx,
+        item.video,
+        item.x,
+        item.y,
+        item.width,
+        item.height
+      );
+
+      hiddenStreamCtx.restore();
+    }
+  });
+
+  requestAnimationFrame(render);
+}
+
+render();
+
+function getLiveVideoTrack() {
+  if (
+    hiddenStreamCanvas &&
+    typeof hiddenStreamCanvas.captureStream === 'function'
+  ) {
+    const stream = hiddenStreamCanvas.captureStream(60);
+    return stream.getVideoTracks()[0] || null;
+  }
+
+  return null;
 }
 
 // --------------------------------------------------
@@ -564,61 +593,91 @@ function refreshLayersPanel() {
 
       shapeSelect.onchange = () => {
         item.shape = shapeSelect.value;
+        if (
+          item.shape === 'circle' ||
+          item.shape === 'square'
+        ) {
+          const size = Math.min(
+            item.width,
+            item.height
+          );
+          item.width = size;
+          item.height = size;
+        }
         updateTile(item);
+        refreshLayersPanel();
       };
 
       row.appendChild(shapeLabel);
       row.appendChild(shapeSelect);
 
-      const widthLabel =
+      const isSquareMode =
+        item.shape === 'square' ||
+        item.shape === 'circle';
+
+      const sizeLabel =
         document.createElement('div');
 
-      widthLabel.textContent =
-        `Width: ${item.width}px`;
+      sizeLabel.textContent = isSquareMode
+        ? `Size: ${item.width}px`
+        : `Width: ${item.width}px`;
 
-      const width =
+      const sizeInput =
         document.createElement('input');
 
-      width.type = 'number';
-      width.min = 10;
-      width.max = 1280;
-      width.step = 1;
-      width.value = item.width;
-      width.className = 'layer-slider';
-      width.onchange = () => {
-        item.width = Math.max(10, Number(width.value));
-        widthLabel.textContent =
-          `Width: ${item.width}px`;
+      sizeInput.type = 'number';
+      sizeInput.min = 10;
+      sizeInput.max = 1280;
+      sizeInput.step = 1;
+      sizeInput.value = item.width;
+      sizeInput.className = 'layer-slider';
+      sizeInput.onchange = () => {
+        const value = Math.max(
+          10,
+          Number(sizeInput.value)
+        );
+        if (isSquareMode) {
+          item.width = value;
+          item.height = value;
+          sizeLabel.textContent =
+            `Size: ${value}px`;
+        } else {
+          item.width = value;
+          sizeLabel.textContent =
+            `Width: ${item.width}px`;
+        }
         updateTile(item);
       };
 
-      row.appendChild(widthLabel);
-      row.appendChild(width);
+      row.appendChild(sizeLabel);
+      row.appendChild(sizeInput);
 
-      const heightLabel =
-        document.createElement('div');
+      if (!isSquareMode) {
+        const heightLabel =
+          document.createElement('div');
 
-      heightLabel.textContent =
-        `Height: ${item.height}px`;
-
-      const height =
-        document.createElement('input');
-
-      height.type = 'number';
-      height.min = 10;
-      height.max = 720;
-      height.step = 1;
-      height.value = item.height;
-      height.className = 'layer-slider';
-      height.onchange = () => {
-        item.height = Math.max(10, Number(height.value));
         heightLabel.textContent =
           `Height: ${item.height}px`;
-        updateTile(item);
-      };
 
-      row.appendChild(heightLabel);
-      row.appendChild(height);
+        const height =
+          document.createElement('input');
+
+        height.type = 'number';
+        height.min = 10;
+        height.max = 720;
+        height.step = 1;
+        height.value = item.height;
+        height.className = 'layer-slider';
+        height.onchange = () => {
+          item.height = Math.max(10, Number(height.value));
+          heightLabel.textContent =
+            `Height: ${item.height}px`;
+          updateTile(item);
+        };
+
+        row.appendChild(heightLabel);
+        row.appendChild(height);
+      }
     }
 
     // AUDIO
@@ -1037,86 +1096,31 @@ function removeSceneItem(id) {
   log('Removed:', id);
 }
 
-// --------------------------------------------------
-// RENDER
-// --------------------------------------------------
-
-function render() {
-  ctx.clearRect(
-    0,
-    0,
-    canvas.width,
-    canvas.height
-  );
-
-  const sorted = [...scene].sort(
-    (a, b) => a.zIndex - b.zIndex
-  );
-
-  sorted.forEach((item) => {
-    if (item.type === 'microphone') return;
-
-    if (
-      item.video.readyState >= 2
-    ) {
-      ctx.save();
-
-      let radiusX = 0;
-      let radiusY = 0;
-
-      if (item.shape === 'circle') {
-        const radius =
-          Math.min(
-            item.width,
-            item.height
-          ) / 2;
-
-        radiusX = radius;
-        radiusY = radius;
-      }
-
-      roundedRect(
-        ctx,
-        item.x,
-        item.y,
-        item.width,
-        item.height,
-        radiusX,
-        radiusY
-      );
-
-      ctx.clip();
-
-      drawCoverVideo(
-        ctx,
-        item.video,
-        item.x,
-        item.y,
-        item.width,
-        item.height
-      );
-
-      ctx.restore();
-    }
-  });
-
-  requestAnimationFrame(render);
-}
-
-render();
 
 // --------------------------------------------------
 // LIVE START
 // --------------------------------------------------
 
 startStreamBtn.onclick = () => {
-  const canvasStream =
-    canvas.captureStream(60);
+  const videoTrack = getLiveVideoTrack();
+
+  if (!videoTrack) {
+    livePlaceholder.textContent =
+      'Add a camera or screen source before starting live.';
+    return;
+  }
+
+  livePreviewWrapper.style.width =
+    workbenchWidth + 'px';
+  livePreviewWrapper.style.height =
+    workbenchHeight + 'px';
+
+  previewVideo.style.borderRadius = '0';
+  previewVideo.style.overflow = 'visible';
 
   finalStream =
     new MediaStream([
-      ...canvasStream.getVideoTracks(),
-
+      videoTrack,
       ...audioDestination.stream.getAudioTracks(),
     ]);
 
@@ -1136,8 +1140,6 @@ startStreamBtn.onclick = () => {
     'block';
 
   log('LIVE STARTED');
-
-  console.log(finalStream);
 };
 
 // --------------------------------------------------
@@ -1167,6 +1169,14 @@ stopLiveBtn.onclick = () => {
     'none';
 
   finalStream = null;
+
+  livePreviewWrapper.style.width =
+    workbenchWidth + 'px';
+  livePreviewWrapper.style.height =
+    workbenchHeight + 'px';
+
+  previewVideo.style.borderRadius = '0';
+  previewVideo.style.overflow = 'visible';
 
   log('LIVE STOPPED');
 };
