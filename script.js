@@ -1085,6 +1085,25 @@ function createSceneItem(
     focused: false,
   };
 
+  const onTrackEnded = () => {
+    if (scene.find((s) => s.id === item.id)) {
+      log('Stream ended for item, removing layer', item.id, item.label);
+      removeSceneItem(item.id);
+    }
+  };
+
+  item.onStreamEnded = onTrackEnded;
+
+  stream.getTracks().forEach((track) => {
+    track.addEventListener('ended', onTrackEnded);
+  });
+
+  item.cleanupStreamEnd = () => {
+    stream.getTracks().forEach((track) => {
+      track.removeEventListener('ended', onTrackEnded);
+    });
+  };
+
   scene.push(item);
 
   if (item.type !== 'microphone') {
@@ -1310,9 +1329,16 @@ function removeSceneItem(id) {
 
   const item = scene[index];
 
+  if (item.cleanupStreamEnd) {
+    item.cleanupStreamEnd();
+  }
+
   item.stream
     .getTracks()
-    .forEach((t) => t.stop());
+    .forEach((t) => {
+      t.removeEventListener('ended', item.onStreamEnded);
+      t.stop();
+    });
 
   if (item.tile) {
     item.tile.remove();
