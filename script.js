@@ -97,6 +97,8 @@ let liveRequestInterval = null;
 let liveCountdownInterval = null;
 let pendingChunks = [];
 let isStoppingLive = false;
+let isStopCountdown = false;
+let isLiveActive = false;
 let liveSentChunkCount = 0;
 let lastRenderTime = 0;
 let frameDrawCount = 0;
@@ -197,11 +199,30 @@ function stopLiveSendInterval() {
   }
 }
 
+function finalizeLiveStop() {
+  if (liveRecorder) return;
+
+  if (pendingChunks.length) {
+    ensureLiveSendInterval();
+    return;
+  }
+
+  stopLiveSendInterval();
+  stopLiveRequestInterval();
+  setLiveStatus('Live stopped — last bytes sent');
+  startStreamBtn.style.display = 'block';
+  stopLiveBtn.style.display = 'none';
+  startStreamBtn.disabled = false;
+  stopLiveBtn.disabled = true;
+  isStoppingLive = false;
+  isLiveActive = false;
+  log('LIVE FULLY STOPPED');
+}
+
 function sendPendingChunk() {
   if (!pendingChunks.length) {
     if (isStoppingLive && !liveRecorder) {
-      stopLiveSendInterval();
-      setLiveStatus('Live stopped — last bytes sent');
+      finalizeLiveStop();
     }
     return;
   }
@@ -223,8 +244,7 @@ function sendPendingChunk() {
   // TODO: send chunk to backend here
 
   if (isStoppingLive && !pendingChunks.length && !liveRecorder) {
-    stopLiveSendInterval();
-    setLiveStatus('Live stopped — last bytes sent');
+    finalizeLiveStop();
   }
 }
 
@@ -1301,6 +1321,11 @@ function removeSceneItem(id) {
 // --------------------------------------------------
 
 startStreamBtn.onclick = () => {
+  if (isStopCountdown || isLiveActive) {
+    setLiveStatus('Live is stopping or already active. Please wait.');
+    return;
+  }
+
   const videoTrack = getLiveVideoTrack();
 
   if (!videoTrack) {
@@ -1309,8 +1334,10 @@ startStreamBtn.onclick = () => {
     return;
   }
 
-  isStoppingLive = false;
-  pendingChunks = [];
+  if (!isStoppingLive) {
+    pendingChunks = [];
+  }
+
   liveSentChunkCount = 0;
   stopLiveSendInterval();
   clearLiveStatus();
@@ -1336,6 +1363,15 @@ startStreamBtn.onclick = () => {
   if (audioContext && audioContext.state === 'suspended') {
     audioContext.resume().catch(() => {});
   }
+
+  if (isStopCountdown || isLiveActive) {
+    setLiveStatus('Live is stopping or already active. Please wait.');
+    return;
+  }
+
+  isLiveActive = true;
+  startStreamBtn.disabled = true;
+  stopLiveBtn.disabled = false;
 
   if (typeof MediaRecorder !== 'undefined') {
     const supportedTypes = [
@@ -1435,13 +1471,7 @@ startStreamBtn.onclick = () => {
       recorder.onstop = function () {
         console.log('Live recorder stopped');
         liveRecorder = null;
-        if (pendingChunks.length) {
-          ensureLiveSendInterval();
-        } else if (isStoppingLive) {
-          stopLiveSendInterval();
-          setLiveStatus('Live stopped — last bytes sent');
-        }
-        stopLiveRequestInterval();
+        finalizeLiveStop();
       };
 
       recorder.onerror = function (event) {
@@ -1479,6 +1509,7 @@ startStreamBtn.onclick = () => {
 
   stopLiveBtn.style.display =
     'block';
+  stopLiveBtn.disabled = false;
 
   setLiveStatus('Live will start in 3...');
   runCountdown('Live starts', () => {
@@ -1526,12 +1557,41 @@ startStreamBtn.onclick = () => {
 // --------------------------------------------------
 
 stopLiveBtn.onclick = () => {
-  if (!finalStream) return;
+  if (!finalStream || isStoppingLive) return;
 
   isStoppingLive = true;
+  startStreamBtn.disabled = true;
+  stopLiveBtn.disabled = true;
+
   setLiveStatus('Live stop in 3...');
+  isStopCountdown = true;
   runCountdown('Live stopped', () => {
-    setLiveStatus('Live stopped');
+    if (liveRecorder) {
+      try {
+        if (liveRecorder.state !== 'inactive') {
+          liveRecorder.stop();
+        }
+      } catch (err) {
+        console.warn('Error stopping live recorder', err);
+      }
+    }
+
+    stopLiveRequestInterval();
+
+    if (finalStream) {
+      finalStream.getTracks().forEach((t) => t.stop());
+      finalStream = null;
+    }
+
+    isStopCountdown = false;
+    isLiveActive = false;
+    startStreamBtn.style.display = 'block';
+    stopLiveBtn.style.display = 'none';
+    startStreamBtn.disabled = false;
+    stopLiveBtn.disabled = true;
+    setLiveStatus('Live stopped — sending last bytes');
+
+    finalizeLiveStop();
   });
 
   previewVideo.srcObject =
@@ -1543,32 +1603,6 @@ stopLiveBtn.onclick = () => {
   livePlaceholder.style.display =
     'flex';
 
-  startStreamBtn.style.display =
-    'block';
-
-  stopLiveBtn.style.display =
-    'none';
-
-  if (liveRecorder) {
-    try {
-      if (liveRecorder.state !== 'inactive') {
-        liveRecorder.stop();
-      }
-    } catch (err) {
-      console.warn('Error stopping live recorder', err);
-    }
-  }
-
-  stopLiveRequestInterval();
-
-  if (finalStream) {
-    finalStream
-      .getVideoTracks()
-      .forEach((t) => t.stop());
-  }
-
-  finalStream = null;
-
   livePreviewWrapper.style.width =
     workbenchWidth + 'px';
   livePreviewWrapper.style.height =
@@ -1576,14 +1610,6 @@ stopLiveBtn.onclick = () => {
 
   previewVideo.style.borderRadius = '0';
   previewVideo.style.overflow = 'visible';
-
-  ensureLiveSendInterval();
-  if (!pendingChunks.length) {
-    setLiveStatus('Live stopped — last bytes sent');
-    stopLiveSendInterval();
-  }
-
-  log('LIVE STOPPED');
 };
 
 // --------------------------------------------------
