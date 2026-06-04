@@ -13,6 +13,9 @@ const startStreamBtn =
 const stopLiveBtn =
   document.getElementById('stopLiveBtn');
 
+const liveStatus =
+  document.getElementById('liveStatus');
+
 const cameraList =
   document.getElementById('cameraList');
 
@@ -46,6 +49,21 @@ const hiddenStreamCanvas =
 const hiddenStreamCtx =
   hiddenStreamCanvas.getContext('2d');
 
+// keep the canvas offscreen but renderable (avoid display:none which may pause drawing)
+hiddenStreamCanvas.style.position = 'absolute';
+hiddenStreamCanvas.style.left = '-9999px';
+hiddenStreamCanvas.style.top = '0';
+hiddenStreamCanvas.style.width = '1px';
+hiddenStreamCanvas.style.height = '1px';
+hiddenStreamCanvas.style.opacity = '0';
+hiddenStreamCanvas.style.pointerEvents = 'none';
+document.body.appendChild(hiddenStreamCanvas);
+
+let hiddenStream =
+  hiddenStreamCanvas.captureStream
+    ? hiddenStreamCanvas.captureStream(60)
+    : null;
+
 const workbenchWidthInput =
   document.getElementById('workbenchWidth');
 
@@ -73,6 +91,142 @@ let scene = [];
 let zCounter = 1;
 
 let finalStream = null;
+let liveRecorder = null;
+let liveSendInterval = null;
+let liveRequestInterval = null;
+let liveCountdownInterval = null;
+let pendingChunks = [];
+let isStoppingLive = false;
+let liveSentChunkCount = 0;
+let lastRenderTime = 0;
+let frameDrawCount = 0;
+let zeroBlobCount = 0;
+
+function testVideoRecorder() {
+  // diagnostic: try recording canvas-only stream to see if encoder emits bytes
+  try {
+    if (!hiddenStreamCanvas || typeof hiddenStreamCanvas.captureStream !== 'function') return;
+    const testStream = hiddenStreamCanvas.captureStream(30);
+    const testTypes = [
+      'video/webm;codecs=vp8,opus',
+      'video/webm;codecs=vp8',
+      'video/webm'
+    ];
+    let sel = '';
+    for (const t of testTypes) {
+      if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(t)) {
+        sel = t;
+        break;
+      }
+    }
+
+    const tr = sel ? new MediaRecorder(testStream, { mimeType: sel }) : new MediaRecorder(testStream);
+    tr.ondataavailable = (ev) => {
+      console.log('[Workbench][diag] testVideoRecorder data', ev.data && ev.data.size, ev.data && ev.data.type);
+      try { tr.stop(); } catch (e) {}
+    };
+    tr.onerror = (e) => console.warn('[Workbench][diag] testVideoRecorder error', e);
+    tr.start(1000);
+    setTimeout(() => {
+      try { if (tr.state !== 'inactive') tr.stop(); } catch (e) {}
+    }, 1500);
+  } catch (e) {
+    console.warn('testVideoRecorder failed', e);
+  }
+}
+
+function setLiveStatus(text) {
+  if (liveStatus) {
+    liveStatus.textContent = text;
+  }
+}
+
+function clearLiveStatus() {
+  if (liveStatus) {
+    liveStatus.textContent = '';
+  }
+}
+
+function runCountdown(label, onComplete) {
+  let count = 3;
+
+  setLiveStatus(`${label} in ${count}...`);
+
+  if (liveCountdownInterval) {
+    clearInterval(liveCountdownInterval);
+  }
+
+  liveCountdownInterval = setInterval(() => {
+    count -= 1;
+
+    if (count >= 0) {
+      if (count === 0) {
+        setLiveStatus(`${label}...`);
+      } else {
+        setLiveStatus(`${label} in ${count}...`);
+      }
+    }
+
+    if (count < 0) {
+      clearInterval(liveCountdownInterval);
+      liveCountdownInterval = null;
+      onComplete?.();
+    }
+  }, 1000);
+}
+
+function ensureLiveSendInterval() {
+  if (liveSendInterval) return;
+
+  liveSendInterval = setInterval(() => {
+    sendPendingChunk();
+  }, 2000);
+}
+
+function stopLiveRequestInterval() {
+  if (liveRequestInterval) {
+    clearInterval(liveRequestInterval);
+    liveRequestInterval = null;
+  }
+}
+
+function stopLiveSendInterval() {
+  if (liveSendInterval) {
+    clearInterval(liveSendInterval);
+    liveSendInterval = null;
+  }
+}
+
+function sendPendingChunk() {
+  if (!pendingChunks.length) {
+    if (isStoppingLive && !liveRecorder) {
+      stopLiveSendInterval();
+      setLiveStatus('Live stopped — last bytes sent');
+    }
+    return;
+  }
+
+  const chunk = pendingChunks.shift();
+  liveSentChunkCount += 1;
+
+  console.log(
+    `[Workbench] Sending live chunk #${liveSentChunkCount}`,
+    {
+      size: chunk.size,
+      type: chunk.type,
+      sequence: liveSentChunkCount,
+      pending: pendingChunks.length,
+      timestamp: new Date().toISOString(),
+    }
+  );
+
+  // TODO: send chunk to backend here
+
+  if (isStoppingLive && !pendingChunks.length && !liveRecorder) {
+    stopLiveSendInterval();
+    setLiveStatus('Live stopped — last bytes sent');
+  }
+}
 
 // --------------------------------------------------
 // GLOBAL TABS
@@ -498,18 +652,43 @@ function render() {
     }
   });
 
+  // draw a tiny changing pixel to ensure canvas content changes each frame
+  try {
+    const c = frameDrawCount % 256;
+    hiddenStreamCtx.fillStyle = `rgb(${c},${c},${c})`;
+    hiddenStreamCtx.fillRect(0, 0, 1, 1);
+  } catch (e) {
+    // ignore
+  }
+
+  // mark that a frame was drawn
+  lastRenderTime = Date.now();
+  frameDrawCount += 1;
+
   requestAnimationFrame(render);
 }
 
 render();
 
 function getLiveVideoTrack() {
-  if (
-    hiddenStreamCanvas &&
-    typeof hiddenStreamCanvas.captureStream === 'function'
-  ) {
-    const stream = hiddenStreamCanvas.captureStream(60);
-    return stream.getVideoTracks()[0] || null;
+  // Ensure captureStream matches the canvas size so encoder receives real frames
+  try {
+    if (hiddenStreamCanvas && typeof hiddenStreamCanvas.captureStream === 'function') {
+      const needCreate = !hiddenStream || hiddenStreamCanvas.width !== workbenchWidth || hiddenStreamCanvas.height !== workbenchHeight;
+      if (needCreate) {
+        try {
+          hiddenStream = hiddenStreamCanvas.captureStream(60);
+        } catch (e) {
+          console.warn('captureStream failed', e);
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('getLiveVideoTrack error', e);
+  }
+
+  if (hiddenStream) {
+    return hiddenStream.getVideoTracks()[0] || null;
   }
 
   return null;
@@ -1130,6 +1309,12 @@ startStreamBtn.onclick = () => {
     return;
   }
 
+  isStoppingLive = false;
+  pendingChunks = [];
+  liveSentChunkCount = 0;
+  stopLiveSendInterval();
+  clearLiveStatus();
+
   livePreviewWrapper.style.width =
     workbenchWidth + 'px';
   livePreviewWrapper.style.height =
@@ -1147,6 +1332,142 @@ startStreamBtn.onclick = () => {
   previewVideo.srcObject =
     finalStream;
 
+  // Ensure audio context is running so audioDestination has data
+  if (audioContext && audioContext.state === 'suspended') {
+    audioContext.resume().catch(() => {});
+  }
+
+  if (typeof MediaRecorder !== 'undefined') {
+    const supportedTypes = [
+      'video/webm;codecs=vp8,opus',
+      'video/webm;codecs=vp9,opus',
+      'video/webm;codecs=h264,opus',
+      'video/webm',
+    ];
+
+    let selectedType = '';
+    for (const type of supportedTypes) {
+      if (MediaRecorder.isTypeSupported(type)) {
+        selectedType = type;
+        break;
+      }
+    }
+
+    if (!selectedType) {
+      console.warn('No supported MediaRecorder mimeType found. Falling back to default.');
+    }
+
+    try {
+      const recorder = new MediaRecorder(finalStream, selectedType ? { mimeType: selectedType } : undefined);
+      liveRecorder = recorder;
+
+      recorder.onstart = function () {
+        console.log('Live recorder started', {
+          mimeType: selectedType || 'default',
+          state: this.state,
+        });
+      };
+
+      recorder.ondataavailable = function (event) {
+        if (!event.data) {
+          console.log('Live recorder data event with no data', new Date().toISOString());
+          return;
+        }
+
+          console.log('Live recorder data event', event.data.size, 'bytes', event.data.type, new Date().toISOString());
+
+          if (event.data.size === 0) {
+            zeroBlobCount += 1;
+            // debug helpful info when blobs are empty
+            try {
+              console.warn('[Workbench] Zero-size blob captured — debugging capture state');
+              const vids = scene.map((i) => ({ id: i.id, readyState: i.video.readyState, videoWidth: i.video.videoWidth, videoHeight: i.video.videoHeight }));
+              console.warn('[Workbench] capture debug', {
+                canvasW: hiddenStreamCanvas.width,
+                canvasH: hiddenStreamCanvas.height,
+                sceneLength: scene.length,
+                videos: vids,
+                finalVideoTrackReadyState: finalStream && finalStream.getVideoTracks().length ? finalStream.getVideoTracks()[0].readyState : 'no-track',
+                lastRenderTime,
+                frameDrawCount
+              });
+              // try to snapshot canvas as PNG to verify content
+              try {
+                hiddenStreamCanvas.toBlob((b) => {
+                  if (b) console.warn('[Workbench] canvas snapshot size', b.size);
+                  else console.warn('[Workbench] canvas snapshot returned null');
+                });
+              } catch (tbErr) {
+                console.warn('canvas.toBlob failed', tbErr);
+              }
+            } catch (dbgErr) {
+              console.warn('Capture debug failed', dbgErr);
+            }
+            // run a quick diagnostic recorder on first zero
+            if (zeroBlobCount === 1) testVideoRecorder();
+
+            // after several zero events, fallback to sending PNG snapshots
+            if (zeroBlobCount >= 3) {
+              try {
+                hiddenStreamCanvas.toBlob((b) => {
+                  if (b && b.size > 0) {
+                    pendingChunks.push(b);
+                    console.log('[Workbench] queued fallback PNG snapshot', b.size, 'bytes');
+                  }
+                }, 'image/png');
+              } catch (e) {
+                console.warn('Fallback snapshot failed', e);
+              }
+            }
+          }
+
+          if (event.data.size > 0) {
+            zeroBlobCount = 0;
+            pendingChunks.push(event.data);
+            console.log('Queued live chunk', {
+              size: event.data.size,
+              queued: pendingChunks.length,
+              timestamp: new Date().toISOString(),
+            });
+          }
+      };
+
+      recorder.onstop = function () {
+        console.log('Live recorder stopped');
+        liveRecorder = null;
+        if (pendingChunks.length) {
+          ensureLiveSendInterval();
+        } else if (isStoppingLive) {
+          stopLiveSendInterval();
+          setLiveStatus('Live stopped — last bytes sent');
+        }
+        stopLiveRequestInterval();
+      };
+
+      recorder.onerror = function (event) {
+        console.warn('Live recorder error', event);
+      };
+
+      const startRecording = () => {
+        try {
+          recorder.start(1000);
+          console.log('Live recorder start() called', {
+            state: recorder.state,
+            trackReadyState: videoTrack.readyState,
+          });
+        } catch (recordStartError) {
+          console.warn('Failed to start live recorder', recordStartError);
+        }
+      };
+
+      requestAnimationFrame(startRecording);
+    } catch (err) {
+      console.warn('MediaRecorder unavailable', err);
+    }
+  } else {
+    console.warn('MediaRecorder is not supported in this browser');
+  }
+
   previewVideo.style.display =
     'block';
 
@@ -1158,6 +1479,35 @@ startStreamBtn.onclick = () => {
 
   stopLiveBtn.style.display =
     'block';
+
+  setLiveStatus('Live will start in 3...');
+  runCountdown('Live starts', () => {
+    console.log('[Workbench] Live send started after countdown');
+    if (liveRecorder) {
+      try {
+        liveRecorder.requestData();
+      } catch (err) {
+        console.warn('Unable to request data after countdown', err);
+      }
+
+      if (liveRequestInterval) {
+        clearInterval(liveRequestInterval);
+      }
+
+      liveRequestInterval = setInterval(() => {
+        if (liveRecorder) {
+          try {
+            liveRecorder.requestData();
+          } catch (err) {
+            console.warn('Unable to request data during live send', err);
+          }
+        }
+      }, 2000);
+    }
+    sendPendingChunk();
+    ensureLiveSendInterval();
+    setLiveStatus('Live is sending');
+  });
 
   log('LIVE STARTED');
   console.log(
@@ -1178,9 +1528,11 @@ startStreamBtn.onclick = () => {
 stopLiveBtn.onclick = () => {
   if (!finalStream) return;
 
-  finalStream
-    .getTracks()
-    .forEach((t) => t.stop());
+  isStoppingLive = true;
+  setLiveStatus('Live stop in 3...');
+  runCountdown('Live stopped', () => {
+    setLiveStatus('Live stopped');
+  });
 
   previewVideo.srcObject =
     null;
@@ -1197,6 +1549,24 @@ stopLiveBtn.onclick = () => {
   stopLiveBtn.style.display =
     'none';
 
+  if (liveRecorder) {
+    try {
+      if (liveRecorder.state !== 'inactive') {
+        liveRecorder.stop();
+      }
+    } catch (err) {
+      console.warn('Error stopping live recorder', err);
+    }
+  }
+
+  stopLiveRequestInterval();
+
+  if (finalStream) {
+    finalStream
+      .getVideoTracks()
+      .forEach((t) => t.stop());
+  }
+
   finalStream = null;
 
   livePreviewWrapper.style.width =
@@ -1206,6 +1576,12 @@ stopLiveBtn.onclick = () => {
 
   previewVideo.style.borderRadius = '0';
   previewVideo.style.overflow = 'visible';
+
+  ensureLiveSendInterval();
+  if (!pendingChunks.length) {
+    setLiveStatus('Live stopped — last bytes sent');
+    stopLiveSendInterval();
+  }
 
   log('LIVE STOPPED');
 };

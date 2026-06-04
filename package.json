@@ -1,0 +1,11 @@
+{
+  "name": "workbench-studio",
+  "version": "1.0.0",
+  "description": "Frontend demo showing live streaming from a canvas and mixed audio. Start with `npm start` or the VS Code task.",
+  "scripts": {
+    "start": "npx http-server -p 8000",
+    "serve": "npm run start"
+  },
+  "author": "",
+  "license": "MIT"
+}

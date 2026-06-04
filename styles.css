@@ -281,3 +281,10 @@ body {
 .live-info {
   opacity: 0.7;
 }
+
+.live-status {
+  margin-top: 8px;
+  font-size: 0.95rem;
+  color: #333;
+  opacity: 0.9;
+}
