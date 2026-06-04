@@ -703,7 +703,10 @@ function getLiveVideoTrack() {
   // Ensure captureStream matches the canvas size so encoder receives real frames
   try {
     if (hiddenStreamCanvas && typeof hiddenStreamCanvas.captureStream === 'function') {
-      const needCreate = !hiddenStream || hiddenStreamCanvas.width !== workbenchWidth || hiddenStreamCanvas.height !== workbenchHeight;
+      const currentTrack = hiddenStream ? hiddenStream.getVideoTracks()[0] : null;
+      const trackEnded = currentTrack && currentTrack.readyState === 'ended';
+      const needCreate = !hiddenStream || trackEnded || hiddenStreamCanvas.width !== workbenchWidth || hiddenStreamCanvas.height !== workbenchHeight;
+
       if (needCreate) {
         try {
           hiddenStream = hiddenStreamCanvas.captureStream(60);
@@ -1359,10 +1362,24 @@ startStreamBtn.onclick = () => {
   previewVideo.style.borderRadius = '0';
   previewVideo.style.overflow = 'visible';
 
+  const liveVideoTrack =
+    videoTrack && typeof videoTrack.clone === 'function'
+      ? videoTrack.clone()
+      : videoTrack;
+
+  const liveAudioTracks =
+    audioDestination.stream
+      .getAudioTracks()
+      .map((track) =>
+        typeof track.clone === 'function'
+          ? track.clone()
+          : track
+      );
+
   finalStream =
     new MediaStream([
-      videoTrack,
-      ...audioDestination.stream.getAudioTracks(),
+      ...(liveVideoTrack ? [liveVideoTrack] : []),
+      ...liveAudioTracks,
     ]);
 
   previewVideo.srcObject =
@@ -1580,8 +1597,11 @@ stopLiveBtn.onclick = () => {
 
   clearLiveCountdown();
 
+  // Replace the stop button with the start button in disabled state until the full stop completes.
   stopLiveBtn.style.display = 'none';
   stopLiveBtn.disabled = true;
+  startStreamBtn.style.display = 'block';
+  startStreamBtn.disabled = true;
 
   setLiveStatus('Stopping live... sending last bytes');
 
