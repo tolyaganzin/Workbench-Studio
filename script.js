@@ -95,6 +95,7 @@ let liveRecorder = null;
 let liveSendInterval = null;
 let liveRequestInterval = null;
 let liveCountdownInterval = null;
+let liveCountdownType = null;
 let pendingChunks = [];
 let isStoppingLive = false;
 let isStopCountdown = false;
@@ -149,8 +150,17 @@ function clearLiveStatus() {
   }
 }
 
+function clearLiveCountdown() {
+  if (liveCountdownInterval) {
+    clearInterval(liveCountdownInterval);
+    liveCountdownInterval = null;
+    liveCountdownType = null;
+  }
+}
+
 function runCountdown(label, onComplete) {
-  let count = 3;
+  let count = 2;
+  liveCountdownType = label;
 
   setLiveStatus(`${label} in ${count}...`);
 
@@ -170,8 +180,7 @@ function runCountdown(label, onComplete) {
     }
 
     if (count < 0) {
-      clearInterval(liveCountdownInterval);
-      liveCountdownInterval = null;
+      clearLiveCountdown();
       onComplete?.();
     }
   }, 1000);
@@ -1321,7 +1330,7 @@ function removeSceneItem(id) {
 // --------------------------------------------------
 
 startStreamBtn.onclick = () => {
-  if (isStopCountdown || isLiveActive) {
+  if (isStoppingLive || isLiveActive) {
     setLiveStatus('Live is stopping or already active. Please wait.');
     return;
   }
@@ -1485,6 +1494,13 @@ startStreamBtn.onclick = () => {
             state: recorder.state,
             trackReadyState: videoTrack.readyState,
           });
+          if (isStoppingLive) {
+            try {
+              recorder.stop();
+            } catch (stopErr) {
+              console.warn('Stop requested before recorder was ready', stopErr);
+            }
+          }
         } catch (recordStartError) {
           console.warn('Failed to start live recorder', recordStartError);
         }
@@ -1560,54 +1576,48 @@ stopLiveBtn.onclick = () => {
   if (!finalStream || isStoppingLive) return;
 
   isStoppingLive = true;
-  startStreamBtn.disabled = true;
+  isLiveActive = false;
+
+  clearLiveCountdown();
+
+  stopLiveBtn.style.display = 'none';
   stopLiveBtn.disabled = true;
 
-  setLiveStatus('Live stop in 3...');
-  isStopCountdown = true;
-  runCountdown('Live stopped', () => {
-    if (liveRecorder) {
-      try {
-        if (liveRecorder.state !== 'inactive') {
-          liveRecorder.stop();
-        }
-      } catch (err) {
-        console.warn('Error stopping live recorder', err);
-      }
-    }
+  setLiveStatus('Stopping live... sending last bytes');
 
+  if (!liveRecorder || liveRecorder.state === 'inactive') {
+    pendingChunks = [];
     stopLiveRequestInterval();
-
     if (finalStream) {
       finalStream.getTracks().forEach((t) => t.stop());
       finalStream = null;
     }
-
-    isStopCountdown = false;
-    isLiveActive = false;
-    startStreamBtn.style.display = 'block';
-    stopLiveBtn.style.display = 'none';
-    startStreamBtn.disabled = false;
-    stopLiveBtn.disabled = true;
-    setLiveStatus('Live stopped — sending last bytes');
-
     finalizeLiveStop();
-  });
+    return;
+  }
 
-  previewVideo.srcObject =
-    null;
+  if (liveRecorder) {
+    try {
+      if (liveRecorder.state !== 'inactive') {
+        liveRecorder.stop();
+      }
+    } catch (err) {
+      console.warn('Error stopping live recorder', err);
+    }
+  }
 
-  previewVideo.style.display =
-    'none';
+  stopLiveRequestInterval();
 
-  livePlaceholder.style.display =
-    'flex';
+  if (finalStream) {
+    finalStream.getTracks().forEach((t) => t.stop());
+    finalStream = null;
+  }
 
-  livePreviewWrapper.style.width =
-    workbenchWidth + 'px';
-  livePreviewWrapper.style.height =
-    workbenchHeight + 'px';
-
+  previewVideo.srcObject = null;
+  previewVideo.style.display = 'none';
+  livePlaceholder.style.display = 'flex';
+  livePreviewWrapper.style.width = workbenchWidth + 'px';
+  livePreviewWrapper.style.height = workbenchHeight + 'px';
   previewVideo.style.borderRadius = '0';
   previewVideo.style.overflow = 'visible';
 };
