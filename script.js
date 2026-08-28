@@ -640,9 +640,11 @@ function render() {
     if (item.video.readyState >= 2) {
       hiddenStreamCtx.save();
 
+      hiddenStreamCtx.translate(item.x, item.y);
+
       if (item.shape === 'circle') {
-        const centerX = item.x + item.width / 2;
-        const centerY = item.y + item.height / 2;
+        const centerX = item.width / 2;
+        const centerY = item.height / 2;
         const radius = Math.min(item.width, item.height) / 2;
 
         hiddenStreamCtx.beginPath();
@@ -657,8 +659,8 @@ function render() {
       } else {
         roundedRect(
           hiddenStreamCtx,
-          item.x,
-          item.y,
+          0,
+          0,
           item.width,
           item.height,
           0,
@@ -668,14 +670,31 @@ function render() {
         hiddenStreamCtx.clip();
       }
 
-      drawCoverVideo(
-        hiddenStreamCtx,
-        item.video,
-        item.x,
-        item.y,
-        item.width,
-        item.height
-      );
+      if (item.mirrored) {
+        hiddenStreamCtx.save();
+        hiddenStreamCtx.translate(item.width, 0);
+        hiddenStreamCtx.scale(-1, 1);
+
+        drawCoverVideo(
+          hiddenStreamCtx,
+          item.video,
+          0,
+          0,
+          item.width,
+          item.height
+        );
+
+        hiddenStreamCtx.restore();
+      } else {
+        drawCoverVideo(
+          hiddenStreamCtx,
+          item.video,
+          0,
+          0,
+          item.width,
+          item.height
+        );
+      }
 
       hiddenStreamCtx.restore();
     }
@@ -889,6 +908,29 @@ function refreshLayersPanel() {
         row.appendChild(heightLabel);
         row.appendChild(height);
       }
+
+      if (item.type === 'camera') {
+        const mirrorLabel =
+          document.createElement('div');
+
+        mirrorLabel.textContent = 'Mirror';
+
+        const mirrorToggle =
+          document.createElement('button');
+
+        mirrorToggle.textContent =
+          item.mirrored ? 'On' : 'Off';
+
+        mirrorToggle.onclick = () => {
+          item.mirrored = !item.mirrored;
+          mirrorToggle.textContent =
+            item.mirrored ? 'On' : 'Off';
+          updateTile(item);
+        };
+
+        row.appendChild(mirrorLabel);
+        row.appendChild(mirrorToggle);
+      }
     }
 
     // AUDIO
@@ -1080,12 +1122,17 @@ function createSceneItem(
 
     shape: 'free',
     borderRadius: 0,
+    mirrored: type === 'camera',
 
     zIndex: zCounter++,
     focused: false,
   };
 
   const onTrackEnded = () => {
+    if (item.isRemoving) {
+      return;
+    }
+
     if (scene.find((s) => s.id === item.id)) {
       log('Stream ended for item, removing layer', item.id, item.label);
       removeSceneItem(item.id);
@@ -1309,6 +1356,10 @@ function updateTile(item) {
 
   item.video.style.borderRadius =
     borderRadius + '%';
+  item.video.style.transform =
+    item.mirrored ? 'scaleX(-1)' : 'none';
+  item.video.style.transformOrigin =
+    'center center';
 
   item.tile.classList.toggle(
     'focused',
@@ -1328,6 +1379,8 @@ function removeSceneItem(id) {
   if (index === -1) return;
 
   const item = scene[index];
+
+  item.isRemoving = true;
 
   if (item.cleanupStreamEnd) {
     item.cleanupStreamEnd();
@@ -1862,19 +1915,9 @@ document
     'stopAllBtn'
   )
   .onclick = () => {
-    scene.forEach((item) => {
-      item.stream
-        .getTracks()
-        .forEach((t) =>
-          t.stop()
-        );
-
-      if (item.tile) {
-        item.tile.remove();
-      }
+    [...scene].forEach((item) => {
+      removeSceneItem(item.id);
     });
-
-    scene = [];
 
     refreshLayersPanel();
 
